@@ -1,4 +1,8 @@
 #!/bin/bash
+# Written by Jessica Brown v2.3.4
+# Version includes ability to use arguments:
+#    ./exclude <tagName> <tagValue> # These are required
+# --subscription <ID> is optional
 
 # Check for required arguments
 if [ $# -lt 2 ]; then
