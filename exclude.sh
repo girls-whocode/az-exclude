@@ -23,36 +23,40 @@ if [ "$3" == "--subscription" ]; then
 fi
 
 # Counters
-count_vms=0
+count_resources=0
 count_subscript=0
 
-# Function to process VMs in a subscription
+# Function to process VMs and Arc-enabled machines in a subscription
 process_subscription() {
     local subscription=$1
     ((count_subscript++))
     echo "Processing subscription: $subscription (${count_subscript} of ${total_subscriptions})"
 
-    # Get all VMs with the specific tag in the subscription
-    mapfile -t vms < <(az vm list --subscription "$subscription" --query "[?tags.$tagName=='$tagValue'].id" -o tsv)
-    total_vms=${#vms[@]}
+    # Get all VMs and Arc-enabled machines with the specific tag in the subscription
+    mapfile -t resources < <(
+        az resource list --subscription "$subscription" --query "[?tags.$tagName=='$tagValue'].id" -o tsv
+    )
+    total_resources=${#resources[@]}
 
-    if [ $total_vms -eq 0 ]; then
-        echo "No VMs found with tag $tagName=$tagValue in subscription $subscription."
+    if [ $total_resources -eq 0 ]; then
+        echo "No resources found with tag $tagName=$tagValue in subscription $subscription."
         return
     fi
 
-    # Loop through each VM and remove it from all maintenance configurations
-    for vm in "${vms[@]}"; do
-        ((count_vms++))
-        echo "Processing VM: $vm (${count_vms} of $total_vms in this subscription)"
+    # Loop through each resource and remove it from all maintenance configurations
+    for resource_id in "${resources[@]}"; do
+        ((count_resources++))
+        echo "Processing resource: $resource_id (${count_resources} of $total_resources in this subscription)"
 
-        # Get all maintenance configurations for the VM
-        mapfile -t maintenanceConfigs < <(az maintenance configuration-assignment list --resource-id "$vm" --query "[].name" -o tsv)
+        # Get all maintenance configurations for the resource
+        mapfile -t maintenanceConfigs < <(
+            az maintenance configuration-assignment list --resource-id "$resource_id" --query "[].name" -o tsv
+        )
 
-        # Remove the VM from each maintenance configuration
+        # Remove the resource from each maintenance configuration
         for config in "${maintenanceConfigs[@]}"; do
-            echo "Removing maintenance configuration $config from $vm"
-            az maintenance configuration-assignment delete --resource-id "$vm" --name "$config"
+            echo "Removing maintenance configuration $config from $resource_id"
+            az maintenance configuration-assignment delete --resource-id "$resource_id" --name "$config"
         done
     done
 }
@@ -64,10 +68,10 @@ if [ -n "$specific_subscription" ]; then
 else
     mapfile -t subscriptions < <(az account list --query "[].id" -o tsv --all)
     total_subscriptions=${#subscriptions[@]}
-    
+
     for subscription in "${subscriptions[@]}"; do
         process_subscription "$subscription"
     done
 fi
 
-echo "VMs with tag $tagName=$tagValue have been excluded from all maintenance configurations across all subscriptions."
+echo "Resources with tag $tagName=$tagValue have been excluded from all maintenance configurations across all subscriptions."
