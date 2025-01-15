@@ -22,12 +22,16 @@ if [ "$3" == "--subscription" ]; then
     fi
 fi
 
+# Enable Maintenance Extension
+az extension add --name maintenance
+
 # Counters
 count_resources=0
 count_subscript=0
 
 # Function to process VMs and Arc-enabled machines in a subscription
 process_subscription() {
+    echo "This will take a long time, it will go through each connected resource. Be patient, be kind, do not CTRL-C me please"
     local subscription=$1
     ((count_subscript++))
     echo "Processing subscription: $subscription (${count_subscript} of ${total_subscriptions})"
