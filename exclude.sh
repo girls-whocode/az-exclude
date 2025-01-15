@@ -22,12 +22,18 @@ if [ "$3" == "--subscription" ]; then
     fi
 fi
 
+# Check if the maintenance extension is installed
+if ! az extension show --name maintenance &>/dev/null; then
+    echo "Installing Azure Maintenance extension..."
+    az extension add --name maintenance
+else
+    echo "Azure Maintenance extension is already installed."
+fi
+
 # Counters
 count_resources=0
 count_subscript=0
-
-# Enable Maintenance Extension
-az extension add --name maintenance
+count_configs_removed=0
 
 # Function to process resources in a subscription
 process_subscription() {
@@ -49,10 +55,7 @@ process_subscription() {
     # Loop through each resource and remove it from all maintenance configurations
     for resource in "${resources[@]}"; do
         ((count_resources++))
-        resource_id=$(echo "$resource" | awk '{print $1}')
-        resource_group=$(echo "$resource" | awk '{print $2}')
-        resource_name=$(echo "$resource" | awk '{print $3}')
-        resource_type=$(echo "$resource" | awk '{print $4}')
+        read -r resource_id resource_group resource_name resource_type <<<"$resource"
 
         echo "Processing resource: $resource_name (${count_resources} of $total_resources in this subscription)"
 
@@ -70,6 +73,11 @@ process_subscription() {
                 --query "[].name" -o tsv
             )
 
+            if [ ${#maintenanceConfigs[@]} -eq 0 ]; then
+                echo "No maintenance assignments found for $resource_name"
+                continue
+            fi
+
             # Remove the Arc-enabled machine from each maintenance configuration
             for config in "${maintenanceConfigs[@]}"; do
                 echo "Removing maintenance configuration $config from $resource_name"
@@ -79,6 +87,8 @@ process_subscription() {
                     --resource-name "$resource_name" \
                     --resource-type machines \
                     --name "$config"
+
+                ((count_configs_removed++))
             done
 
         else
@@ -100,4 +110,9 @@ else
     done
 fi
 
-echo "Resources with tag $tagName=$tagValue have been excluded from all maintenance configurations across all subscriptions."
+# Final Summary
+if [ $count_configs_removed -eq 0 ]; then
+    echo "No maintenance assignments found to remove."
+else
+    echo "Total maintenance configurations removed: $count_configs_removed"
+fi
