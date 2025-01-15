@@ -22,23 +22,22 @@ if [ "$3" == "--subscription" ]; then
     fi
 fi
 
-# Enable Maintenance Extension
-az extension add --name maintenance
-
 # Counters
 count_resources=0
 count_subscript=0
 
-# Function to process VMs and Arc-enabled machines in a subscription
+# Enable Maintenance Extension
+az extension add --name maintenance
+
+# Function to process resources in a subscription
 process_subscription() {
-    echo "This will take a long time, it will go through each connected resource. Be patient, be kind, do not CTRL-C me please"
     local subscription=$1
     ((count_subscript++))
     echo "Processing subscription: $subscription (${count_subscript} of ${total_subscriptions})"
 
-    # Get all VMs and Arc-enabled machines with the specific tag in the subscription
+    # Get all resources with the specific tag in the subscription
     mapfile -t resources < <(
-        az resource list --subscription "$subscription" --query "[?tags.$tagName=='$tagValue'].id" -o tsv
+        az resource list --subscription "$subscription" --query "[?tags.$tagName=='$tagValue'].{id:id, resourceGroup:resourceGroup, name:name, type:type}" -o tsv
     )
     total_resources=${#resources[@]}
 
@@ -48,20 +47,43 @@ process_subscription() {
     fi
 
     # Loop through each resource and remove it from all maintenance configurations
-    for resource_id in "${resources[@]}"; do
+    for resource in "${resources[@]}"; do
         ((count_resources++))
-        echo "Processing resource: $resource_id (${count_resources} of $total_resources in this subscription)"
+        resource_id=$(echo "$resource" | awk '{print $1}')
+        resource_group=$(echo "$resource" | awk '{print $2}')
+        resource_name=$(echo "$resource" | awk '{print $3}')
+        resource_type=$(echo "$resource" | awk '{print $4}')
 
-        # Get all maintenance configurations for the resource
-        mapfile -t maintenanceConfigs < <(
-            az maintenance configuration-assignment list --resource-id "$resource_id" --query "[].name" -o tsv
-        )
+        echo "Processing resource: $resource_name (${count_resources} of $total_resources in this subscription)"
 
-        # Remove the resource from each maintenance configuration
-        for config in "${maintenanceConfigs[@]}"; do
-            echo "Removing maintenance configuration $config from $resource_id"
-            az maintenance configuration-assignment delete --resource-id "$resource_id" --name "$config"
-        done
+        # Check if the resource is an Arc-enabled machine
+        if [[ "$resource_type" == "Microsoft.HybridCompute/machines" ]]; then
+            echo "This is an Arc-enabled machine. Checking for maintenance assignments."
+
+            # Get all maintenance assignments for the Arc-enabled machine
+            mapfile -t maintenanceConfigs < <(
+                az maintenance assignment list \
+                --provider-name Microsoft.HybridCompute \
+                --resource-group "$resource_group" \
+                --resource-name "$resource_name" \
+                --resource-type machines \
+                --query "[].name" -o tsv
+            )
+
+            # Remove the Arc-enabled machine from each maintenance configuration
+            for config in "${maintenanceConfigs[@]}"; do
+                echo "Removing maintenance configuration $config from $resource_name"
+                az maintenance assignment delete \
+                    --provider-name Microsoft.HybridCompute \
+                    --resource-group "$resource_group" \
+                    --resource-name "$resource_name" \
+                    --resource-type machines \
+                    --name "$config"
+            done
+
+        else
+            echo "Skipping non-Arc resource: $resource_name"
+        fi
     done
 }
 
