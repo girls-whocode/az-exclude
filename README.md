@@ -1,14 +1,7 @@
 # **Azure VM Maintenance Configuration Exclusion Script Documentation**
 
 ## **Prerequisites**
-To run this script successfully, ensure you have the following Azure roles and permissions assigned:
-
-| **Role**                        | **Resource**                      | **Resource Type**       | **Membership** |
-|---------------------------------|-----------------------------------|------------------------|----------------|
-| Azure Update Manager Contributor | Computershare                     | Management Group        | Direct         |
-| Azure Update Manager Contributor | CPU-CTS-APIM-Corp-UAT-001         | Subscription            | Direct         |
-| Contributor                     | CPU-CTS-Online-Prod-001           | Subscription            | Direct         |
-| Virtual Machine User Login      | Computershare                     | Management Group        | Direct         |
+To run this script successfully, ensure you have the proper Azure roles and permissions assigned
 
 ## **Accessing Azure Cloud Shell**
 1. In the **Azure Portal**, click on the **Cloud Shell** icon in the top blue bar (it looks like a terminal window).
