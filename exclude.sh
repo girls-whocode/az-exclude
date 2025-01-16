@@ -1,8 +1,6 @@
 #!/bin/bash
-# Written by Jessica Brown v2.3.4
-# Version includes ability to use arguments:
-#    ./exclude <tagName> <tagValue> # These are required
-# --subscription <ID> is optional
+# Written by Jessica Brown v2.4.0
+# Version includes ability to handle both direct and dynamic scope assignments.
 
 # Check for required arguments
 if [ $# -lt 2 ]; then
@@ -38,6 +36,38 @@ fi
 count_resources=0
 count_subscript=0
 count_configs_removed=0
+count_dynamic_configs_removed=0
+
+# Function to remove maintenance assignments from Arc-enabled machines
+remove_maintenance_assignments() {
+    local resource_group=$1
+    local resource_name=$2
+
+    # Get all maintenance assignments (direct assignments)
+    mapfile -t maintenanceConfigs < <(
+        az maintenance assignment list \
+        --provider-name Microsoft.HybridCompute \
+        --resource-group "$resource_group" \
+        --resource-name "$resource_name" \
+        --resource-type machines \
+        --query "[].name" -o tsv
+    )
+
+    if [ ${#maintenanceConfigs[@]} -eq 0 ]; then
+        echo "No direct maintenance assignments found for $resource_name"
+    else
+        for config in "${maintenanceConfigs[@]}"; do
+            echo "Removing maintenance configuration $config from $resource_name"
+            az maintenance assignment delete \
+                --provider-name Microsoft.HybridCompute \
+                --resource-group "$resource_group" \
+                --resource-name "$resource_name" \
+                --resource-type machines \
+                --name "$config"
+            ((count_configs_removed++))
+        done
+    fi
+}
 
 # Function to process resources in a subscription
 process_subscription() {
@@ -56,7 +86,7 @@ process_subscription() {
         return
     fi
 
-    # Loop through each resource and remove it from all maintenance configurations
+    # Loop through each resource and process its maintenance configurations
     for resource in "${resources[@]}"; do
         ((count_resources++))
         read -r resource_id resource_group resource_name resource_type <<<"$resource"
@@ -65,36 +95,34 @@ process_subscription() {
 
         # Check if the resource is an Arc-enabled machine
         if [[ "$resource_type" == "Microsoft.HybridCompute/machines" ]]; then
-            echo "This is an Arc-enabled machine. Checking for maintenance assignments."
+            echo "This is an Arc-enabled machine. Checking for direct and dynamic maintenance assignments."
 
-            # Get all maintenance assignments for the Arc-enabled machine
-            mapfile -t maintenanceConfigs < <(
-                az maintenance assignment list \
-                --provider-name Microsoft.HybridCompute \
-                --resource-group "$resource_group" \
-                --resource-name "$resource_name" \
-                --resource-type machines \
-                --query "[].name" -o tsv
+            # Remove direct maintenance assignments
+            remove_maintenance_assignments "$resource_group" "$resource_name"
+
+            # Check for dynamic scope assignments
+            echo "Checking for dynamic scope assignments for $resource_name..."
+            mapfile -t dynamicConfigs < <(
+                az maintenance configuration list \
+                --subscription "$subscription" \
+                --query "[?contains(properties.scope, 'Microsoft.HybridCompute/machines/$resource_name')].{id:id, name:name}" -o tsv
             )
 
-            if [ ${#maintenanceConfigs[@]} -eq 0 ]; then
-                echo "No maintenance assignments found for $resource_name"
-                continue
+            if [ ${#dynamicConfigs[@]} -eq 0 ]; then
+                echo "No dynamic scope maintenance assignments found for $resource_name"
+            else
+                for dynamic_config in "${dynamicConfigs[@]}"; do
+                    read -r config_id config_name <<<"$dynamic_config"
+                    echo "Removing dynamic scope assignment $config_name from $resource_name"
+
+                    az maintenance configuration update \
+                        --subscription "$subscription" \
+                        --name "$config_name" \
+                        --remove properties.scope "Microsoft.HybridCompute/machines/$resource_name"
+
+                    ((count_dynamic_configs_removed++))
+                done
             fi
-
-            # Remove the Arc-enabled machine from each maintenance configuration
-            for config in "${maintenanceConfigs[@]}"; do
-                echo "Removing maintenance configuration $config from $resource_name"
-                az maintenance assignment delete \
-                    --provider-name Microsoft.HybridCompute \
-                    --resource-group "$resource_group" \
-                    --resource-name "$resource_name" \
-                    --resource-type machines \
-                    --name "$config"
-
-                ((count_configs_removed++))
-            done
-
         else
             echo "Skipping non-Arc resource: $resource_name"
         fi
@@ -115,8 +143,10 @@ else
 fi
 
 # Final Summary
-if [ $count_configs_removed -eq 0 ]; then
+echo "Summary:"
+echo "Total direct maintenance configurations removed: $count_configs_removed"
+echo "Total dynamic scope maintenance configurations removed: $count_dynamic_configs_removed"
+
+if [[ $count_configs_removed -eq 0 && $count_dynamic_configs_removed -eq 0 ]]; then
     echo "No maintenance assignments found to remove."
-else
-    echo "Total maintenance configurations removed: $count_configs_removed"
 fi
